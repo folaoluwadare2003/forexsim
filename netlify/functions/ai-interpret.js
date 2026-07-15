@@ -28,6 +28,7 @@ exports.handler = async function (event) {
     };
   }
 
+  // Simple rotation: pick a random key from the pool each call.
   const key = keys[Math.floor(Math.random() * keys.length)];
 
   let body;
@@ -42,39 +43,55 @@ exports.handler = async function (event) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Missing "prompt" string in request body' }) };
   }
 
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }]
-        })
+  // Try a short list of current model names in order — Gemini's available
+  // model names shift over time and vary by account age, so if the first
+  // one 404s as deprecated/unavailable, fall through to the next instead
+  // of hard-failing the whole feature.
+  const candidateModels = [
+    'gemini-flash-latest',
+    'gemini-2.5-flash-lite',
+    'gemini-2.0-flash'
+  ];
+
+  let lastError = null;
+
+  for (const model of candidateModels) {
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }]
+          })
+        }
+      );
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error(`Gemini API error on model ${model} (status ${response.status}):`, errText);
+        lastError = { status: response.status, text: errText };
+        continue; // try the next model
       }
-    );
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error(`Gemini API error (status ${response.status}):`, errText);
+      const data = await response.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
       return {
-        statusCode: response.status,
-        body: JSON.stringify({ error: `Gemini API error: ${errText}` })
+        statusCode: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, modelUsed: model })
       };
+    } catch (e) {
+      lastError = { status: 500, text: e.message };
+      continue;
     }
-
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-
-    return {
-      statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text })
-    };
-  } catch (e) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: `Proxy request failed: ${e.message}` })
-    };
   }
+
+  // Every candidate model failed
+  return {
+    statusCode: lastError?.status || 500,
+    body: JSON.stringify({ error: `All Gemini model candidates failed. Last error: ${lastError?.text}` })
+  };
 };
