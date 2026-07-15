@@ -8,7 +8,7 @@
 // Get a free key at: https://aistudio.google.com/apikey
 //
 // Env var: GEMINI_API_KEYS
-// Updated to use multiple rotating keys for higher effective rate limit.
+// Updated to use multiple rotating keys for higher effective rate limit (10 keys).
 //   Either a single key, or several comma-separated keys for simple rotation
 //   (spreads calls across accounts, useful if you ever hit the free daily cap).
 //   Example value:
